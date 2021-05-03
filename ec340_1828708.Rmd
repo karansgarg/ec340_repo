@@ -3,9 +3,17 @@ title: "ec340_1828708"
 output: html_document
 ---
 
+```{r}
+# Run once for installation
+# Quandl API key: rTCfeqfv2pbfQG-uk-af
+install.packages("Quandl")
+```
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyr)
+library(Quandl)
+api_key <- "rTCfeqfv2pbfQG-uk-af"
 ```
 
 ## R Markdown
