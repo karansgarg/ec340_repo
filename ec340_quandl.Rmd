@@ -1,0 +1,116 @@
+---
+title: "Has Data Science Shown Financial Markets are Not Efficient?"
+output: html_document
+author: "Karan Garg"
+---
+
+```{r, include=FALSE}
+# Run once for installation
+# Quandl API key: rTCfeqfv2pbfQG-uk-af
+# install.packages("Quandl")
+# install.packages("keras")
+# install_keras()
+# install.packages("tensorflow")
+# install.packages("tsibble")
+# install.packages("randomforest")
+# install.packages("forecast")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tsibble)
+library(Quandl)
+library(keras)
+library(randomForest)
+library(forecast)
+```
+
+## Introduction
+
+In this paper, I aim to explore the role of data science literature in determining whether or not markets are efficient. Many papers claim to generate supernormal returns with their models (using just past prices), implying weak-form inefficiency, however the type of efficiency is rarely discussed. Fama-EMH efficiency may certainly be going down, but Lo-AMH or Samuelson-EMH effieicny may still be preserved. 2 ML algorithms, random forests and then LSTMs are used to assess whether this is the case.
+
+```{r}
+print("hello world")
+```
+
+## Dataset, Preparation and Feature Engineering
+
+```{r}
+Quandl.api_key('rTCfeqfv2pbfQG-uk-af')
+hsbc_raw <- Quandl('HKEX/00005', column_index='1')
+```
+
+```{r}
+hsbc_raw <- subset(hsbc_raw, select = c("Nominal Price"))
+names(hsbc_raw)[1] <- "price"
+timesteps <- c(1:nrow(hsbc_raw))
+hsbc_visual <- cbind(timesteps, hsbc_raw)
+```
+
+We can inspect the data to see what we have:
+
+```{r}
+ggplot(data=hsbc_visual) + geom_line(aes(x=timesteps, y=price))
+acf(hsbc_raw, lag.max = 50)
+pacf(hsbc_raw)
+```
+
+```{r}
+
+```
+
+```{r}
+#Define a function that creates a dataframe with 20 lags of the price so that we can use them as features/variables for the models. A function is used to maintain cleanliness in the global environment, as well as making it easier to reproduce for other assets when testing the models.
+CreateLags <- function(df, assetname, lags=20) {
+  lag_list <- vector(mode="list", length=0)
+  lag_names <- vector(mode="list", length=0)
+  for(i in 1:lags) {
+    lag_list[i] <- assign(sprintf("%s_lag%s", assetname, i), lag(df, i))
+    lag_names[i] <- sprintf("lag%s", i)
+  }
+  df_full <- cbind(df, lag_list)
+  for(i in 1:length(lag_list)){
+    names(df_full)[i+1] <- lag_names[i]
+  }
+  df_full <- df_full[complete.cases(df_full), ]
+  return(df_full)
+}
+```
+
+```{r}
+hsbc <- CreateLags(hsbc_raw, "hsbc")
+glimpse(hsbc)
+```
+
+```{r}
+SplitData <- function(df, training_proportion=0.7){
+  row_split_number <- round(nrow(df)*training_proportion)
+  training_df <- df[1:row_split_number, ]
+  test_df <- df[row_split_number+1:nrow(df) , ]
+  dfs <- list(training_df, test_df)
+  return(dfs)
+}
+```
+
+```{r}
+hsbc_split_list <- SplitData(hsbc)
+hsbc_train_df <- hsbc_split_list[[1]]
+hsbc_test_df <- hsbc_split_list[[2]]
+```
+
+```{r}
+glimpse(hsbc_train_df)
+```
+
+## Model and Analysis
+
+```{r}
+linear <- lm(price~lag1, data=hsbc_train_df)
+summary(linear)
+```
+
+## Results
+
+## Conclusion
+
