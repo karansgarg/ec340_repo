@@ -136,67 +136,33 @@ adf.test(hsbc_log_diff)
 We can see from the results, that this first-difference logged series is indeed stationary. 
 
 ```{r}
-hsbc_lagged <- embed(hsbc_log_diff, 21)
+hsbc_lagged <- embed(hsbc_log_diff, 22)
 ```
 
 ```{r}
-print(hsbc_lagged)
+split_num <- round(nrow(hsbc_lagged)*0.7)
+hsbc_train <- hsbc_lagged[1: split_num, ]
+hsbc_test <- hsbc_lagged[(split_num+1):nrow(hsbc_lagged), ]
+X_train <- hsbc_train[, -1]
+y_train <- hsbc_train[, 1]
+X_test <- hsbc_test[, -1]
+y_test <- hsbc_test[, 1]
 ```
 
 ```{r}
-linear <- lm(~lag1, data=hsbc_train_df)
-summary(linear)
-```
-
-
-```{r}
-#Define a function that creates a dataframe with 20 lags of the price so that we can use them as features/variables for the models. A function is used to maintain cleanliness in the global environment, as well as making it easier to reproduce for other assets when testing the models.
-CreateLags <- function(df, assetname, lags=20) {
-  lag_list <- vector(mode="list", length=0)
-  lag_names <- vector(mode="list", length=0)
-  for(i in 1:lags) {
-    lag_list[i] <- assign(sprintf("%s_lag%s", assetname, i), lag(df, i))
-    lag_names[i] <- sprintf("lag%s", i)
-  }
-  df_full <- cbind(df, lag_list)
-  for(i in 1:length(lag_list)){
-    names(df_full)[i+1] <- lag_names[i]
-  }
-  df_full <- df_full[complete.cases(df_full), ]
-  return(df_full)
-}
-```
-
-```{r}
-hsbc <- CreateLags(hsbc_raw, "hsbc")
-glimpse(hsbc)
-```
-
-```{r}
-SplitData <- function(df, training_proportion=0.7){
-  row_split_number <- round(nrow(df)*training_proportion)
-  training_df <- df[1:row_split_number, ]
-  test_df <- df[row_split_number+1:nrow(df) , ]
-  dfs <- list(training_df, test_df)
-  return(dfs)
-}
-```
-
-```{r}
-```
-
-```{r}
-glimpse(hsbc_train_df)
 ```
 
 ## Model and Analysis
-
+Now that we have the data, we can begin to attempt 
 ```{r}
-linear <- lm(price~lag1, data=hsbc_train_df)
+linear <- lm(y_train ~ X_train)
 summary(linear)
 ```
 
-## Results
+```{r}
+linear_predicted <- predict(linear, newdata = data.frame(X_test))
+```
+As expected, the standard linear regression has a very low explanatory and indeed predictive power. The lags that do seem to appear significant are likely just a result of the repeated "0" values every weekend (we took the first difference of the data and prices do not change over the weekend as there is no trading).
 
 ## Conclusion
 
