@@ -15,6 +15,7 @@ author: "Karan Garg"
 # install.packages("forecast")
 # install.packages("aTSA)
 # install.packages("xgboost")
+# install.packages("superml")
 
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse) # For loading the generally needed packages, dplyr, ggplot2 etc
@@ -26,6 +27,7 @@ library(forecast) # To assess predictions and compare them to the real test set
 library(aTSA)
 library(xgboost)
 library(e1071)
+library(superml)
 ```
 ## Introduction
 
@@ -49,7 +51,6 @@ hsbc_tib <- Quandl('HKEX/00005', column_index = "1") %>%
 names(hsbc_tib)[2] <- "Price"
 dates <- seq(as.Date("2014-02-21"), as.Date("2021-05-07"), by = "day")
 hsbc_ts <- as.ts(hsbc_tib, start = c(2014, as.numeric(format(dates[1], "%j"))), frequency=365)
-
 ```
 
 ```{r}
@@ -234,11 +235,21 @@ xgb_accuracy <- accuracy(xgb_predicted, y_test)
 ```
 
 ```{r}
-svm <- svm()
+svm <- svm(X1 ~ X2 + X3 + X4 + X5 + X6 + X7 + X8 + X9 + X10 + X11 + X12 + X13 + X14 + X15 + X16 + X17 + X18 + X19 + X20 + X21, data=hsbc_train)
+summary(svm)
 ```
 
 ```{r}
-dim(X_train_lstm)[-1]
+svm_gs <- GridSearchCV$new(svm,
+                           parameters = list(cost = seq(from=0.1, to=1, by=0.1),
+                                             gamma = seq(from=0.0001, to=1, by=0.005),
+                                             epsilon = seq(from=0.01, to=0.1, by=0.01)),
+                           n_folds = 5,
+                           scoring = "rmse")
+```
+
+```{r}
+svm_gs_fit <- svm_gs$fit(hsbc_train, "X1")
 ```
 
 ```{r}
@@ -292,6 +303,12 @@ results <- data.frame(cbind(results, lstm_predicted))
 head(results)
 lstm_accuracy <- accuracy(lstm_predicted, y_test)
 ```
+```{r}
+accuracies <- rbind(linear_accuracy, rf_accuracy, xgb_accuracy, lstm_accuracy)
+```
 
+```{r}
+print(accuracies)
+```
 ## Conclusion
 
