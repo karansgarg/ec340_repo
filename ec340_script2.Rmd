@@ -32,7 +32,6 @@ library(e1071)
 library(superml)
 library(lmtest)
 library(rfUtilities)
-library(tfruns)
 set.seed(177125)
 ```
 
@@ -194,15 +193,28 @@ head(results)
 xgb_accuracy <- forecast::accuracy(xgb_tuned_predicted, y_test)
 ```
 ```{r}
-lstm_parameters <- list(units=seq(from=1, to=32, by=1),
-                        dropout=seq(from=0.1, to=0.9, by=0.1))
+lstm_parameters <- list(units=seq(from=4, to=16, by=2),
+                        dropout=seq(from=0.2, to=0.6, by=0.1))
 ```
 
 ```{r}
-runs <- tuning_runs("lstm.R", flags=lstm_parameters, sample=0.5)
-ls_runs(order = metric_val_mean_squared_error, decreasing= FALSE)
+runs <- tuning_run("lstm.R", flags=lstm_parameters, sample=0.5)
+```
+```{r}
+ls_runs(order=metric_val_loss, decreasing=FALSE)
 ```
 
+```{r}
+best_run <- ls_runs(order=metric_val_loss, decreasing=FALSE)[1,]
+
+run <- training_run('lstm.R',flags = list(dropout = best_run$flag_dropout,
+                                          units = best_run$flag_units))
+
+best_model <- load_model_hdf5('lstm.h5')
+```
+```{r}
+summary(best_model)
+```
 ```{r}
 lstm <- keras_model_sequential() %>%
   layer_lstm(units=16, 
@@ -214,11 +226,11 @@ lstm <- keras_model_sequential() %>%
 ```
 
 ```{r}
-lstm %>% compile(optimizer="nadam", loss="mean_squared_error")
+best_model %>% compile(optimizer="nadam", loss="mean_squared_error")
 ```
 
 ```{r}
-lstm_model <- lstm %>% fit(x=X_train_lstm,
+best_model_training <- best_model %>% fit(x=X_train_lstm,
                            y=y_train,
                            batch_size=32,
                            epochs=100,
@@ -227,11 +239,11 @@ lstm_model <- lstm %>% fit(x=X_train_lstm,
 ```
 
 ```{r}
-plot(lstm_model)
+plot(best_model_training)
 ```
 
 ```{r}
-lstm_predicted <- predict(lstm, X_test_lstm) %>%
+lstm_predicted <- predict(best_model, X_test_lstm) %>%
   cumsum() %>%
   exp()
 lstm_predicted <-lstm_predicted * as.vector(tail(hsbc_ts, 1))
