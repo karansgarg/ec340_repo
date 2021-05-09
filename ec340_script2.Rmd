@@ -32,7 +32,7 @@ library(e1071)
 library(superml)
 library(lmtest)
 library(rfUtilities)
-library(caret)
+library(tfruns)
 set.seed(177125)
 ```
 
@@ -194,12 +194,18 @@ head(results)
 xgb_accuracy <- forecast::accuracy(xgb_tuned_predicted, y_test)
 ```
 ```{r}
-flag_numeric()
+lstm_parameters <- list(units=seq(from=1, to=32, by=1),
+                        dropout=seq(from=0.1, to=0.9, by=0.1))
+```
+
+```{r}
+runs <- tuning_runs("lstm.R", flags=lstm_parameters, sample=0.5)
+ls_runs(order = metric_val_mean_squared_error, decreasing= FALSE)
 ```
 
 ```{r}
 lstm <- keras_model_sequential() %>%
-  layer_lstm(units=32, 
+  layer_lstm(units=16, 
              activation="tanh", #Default actiavtion for LSTM
              return_sequences = FALSE, #Only one LSTM layer hence sequence of outputs not needed
              input_shape = dim(X_train_lstm)[-1]) %>% #The layer takes as an input 20 timesteps (lags) and 1 feature
@@ -215,9 +221,13 @@ lstm %>% compile(optimizer="nadam", loss="mean_squared_error")
 lstm_model <- lstm %>% fit(x=X_train_lstm,
                            y=y_train,
                            batch_size=32,
-                           epochs=20,
+                           epochs=100,
                            validation_data=val_list,
                            shuffle=FALSE)
+```
+
+```{r}
+plot(lstm_model)
 ```
 
 ```{r}

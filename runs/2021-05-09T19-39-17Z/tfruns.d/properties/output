@@ -1,0 +1,45 @@
+
+> # FILENAME: lstm.R
+> # Used for tuning the hyperparameters on the LSTM model being trained to predict the HSBC stock price
+> 
+> library(keras)
+
+> flag_numeric("dropout", 0.2)
+$name
+[1] "dropout"
+
+$type
+[1] "numeric"
+
+$default
+[1] 0.2
+
+$description
+NULL
+
+attr(,"class")
+[1] "tfruns_flag"
+
+> flag_integer("units", 1)
+$name
+[1] "units"
+
+$type
+[1] "integer"
+
+$default
+[1] 1
+
+$description
+NULL
+
+attr(,"class")
+[1] "tfruns_flag"
+
+> CreateLSTM <- function(){
++   lstm <- keras_model_sequential() %>%
++     layer_lstm(units=FLAGS$units,
++                activation="tanh",
++         .... [TRUNCATED] 
+
+> lstm <- CreateLSTM()

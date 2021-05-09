@@ -3,8 +3,9 @@
 
 library(keras)
 
-flag_numeric("dropout", 0.2)
-flag_integer("units", 1)
+FLAGS <- flags(flag_numeric("dropout", 0.2),
+               flag_integer("units", 1))
+
 
 CreateLSTM <- function(){
   lstm <- keras_model_sequential() %>%
@@ -23,5 +24,18 @@ CreateLSTM <- function(){
 
 lstm <- CreateLSTM()
 
-epochs <- 10
+lstm_fit <- lstm %>% fit(x=X_train_lstm,
+                         y=y_train,
+                         epochs=100,
+                         batch_size=32,
+                         validation_data=val_list,
+                         shuffle=FALSE,
+                         verbose=0)
 
+acc <- lstm %>% evaluate(x=X_test_lstm,
+                         y=y_test,
+                         verbose=0)
+
+save_model_hdf5(lstm, 'lstm.h5')
+
+#print('Test loss:', acc$loss)
