@@ -1,0 +1,55 @@
+---
+title: "Has Data Science Shown Financial Markets Are Inefficient?"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Run once for installation
+# Quandl API key: rTCfeqfv2pbfQG-uk-af
+# install.packages("Quandl")
+# install.packages("keras")
+# install_keras()
+# install.packages("tensorflow")
+# install.packages("tsibble")
+# install.packages("randomforest")
+# install.packages("forecast")
+# install.packages("aTSA)
+# install.packages("xgboost")
+# install.packages("superml")
+# install.packages("rfUtilities")
+
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse) # For loading the generally needed packages, dplyr, ggplot2 etc
+library(tsibble) # Extension of the tidyverse to time-series data
+library(Quandl) # API for downloading the data
+library(keras) # To train the LSTM model
+library(randomForest) # To implement random forests
+library(forecast) # To assess predictions and compare them to the real test set
+library(aTSA)
+library(xgboost)
+library(e1071)
+library(superml)
+library(lmtest)
+library(rfUtilities)
+set.seed(177125)
+```
+
+## Introduction
+
+
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

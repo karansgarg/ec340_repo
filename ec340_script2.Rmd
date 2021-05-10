@@ -213,6 +213,7 @@ run <- training_run('lstm.R',flags = list(dropout = best_run$flag_dropout,
 best_model <- load_model_hdf5('lstm.h5')
 ```
 ```{r}
+best_model <- load_model_hdf5('lstm.h5')
 summary(best_model)
 ```
 ```{r}
@@ -249,4 +250,45 @@ lstm_predicted <- predict(best_model, X_test_lstm) %>%
 lstm_predicted <-lstm_predicted * as.vector(tail(hsbc_ts, 1))
 lstm_accuracy <- forecast::accuracy(lstm_predicted, y_test)
 print(lstm_accuracy)
+```
+
+```{r}
+results <- data.frame(cbind(results, lstm_predicted))
+```
+
+```{r}
+naive_predicted <- embed(y_test, 2)[, 2]
+```
+
+```{r}
+length(naive_predicted)
+```
+
+```{r}
+forecast:: accuracy(naive_predicted, y_test[-1])
+```
+
+```{r}
+results <- results[-1, ]
+results <- cbind(results, naive_predicted)
+```
+
+```{r}
+results
+```
+```{r}
+results$timesteps <- as.numeric(row.names(results))
+```
+
+```{r}
+nrow(results)
+```
+
+```{r}
+ggplot(data=results) + 
+  geom_line(mapping=aes(x=timesteps, y=actual)) +
+  geom_line(mapping=aes(x=timesteps, y=linear_predicted, colour="red")) +
+  geom_line(mapping=aes(x=timesteps, y=rf_cv_predicted, colour="blue")) +
+  geom_line(mapping=aes(x=timesteps, y=xgb_tuned_predicted, colour="green")) +
+  geom_line(mapping=aes(x=timesteps, y=lstm_predicted, colour="yellow"))
 ```

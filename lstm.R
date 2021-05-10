@@ -37,5 +37,3 @@ acc <- lstm %>% evaluate(x=X_test_lstm,
                          verbose=0)
 
 save_model_hdf5(lstm, 'lstm.h5')
-
-#print('Test loss:', acc$loss)
