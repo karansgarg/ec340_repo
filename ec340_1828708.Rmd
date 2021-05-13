@@ -1,11 +1,10 @@
 ---
-title: "Has Data Science Shown Financial Markets Are Inefficient?"
+title: "Has Data Science Shown Financial Markets are Inefficient?"
 output: html_document
+author: "Warwick Student ID: 1828708"
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-
 # Run once for installation
 # Quandl API key: rTCfeqfv2pbfQG-uk-af
 # install.packages("Quandl")
@@ -19,37 +18,508 @@ knitr::opts_chunk$set(echo = TRUE)
 # install.packages("xgboost")
 # install.packages("superml")
 # install.packages("rfUtilities")
+# install.packages("gridExtra")
+# install.packages("ggplotify")
 
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo=TRUE, message=FALSE, results='hide')
 library(tidyverse) # For loading the generally needed packages, dplyr, ggplot2 etc
 library(tsibble) # Extension of the tidyverse to time-series data
 library(Quandl) # API for downloading the data
-library(keras) # To train the LSTM model
+library(keras) # For Artificial Neural Network
 library(randomForest) # To implement random forests
 library(forecast) # To assess predictions and compare them to the real test set
-library(aTSA)
-library(xgboost)
-library(e1071)
-library(superml)
-library(lmtest)
-library(rfUtilities)
+library(aTSA) #Useful for time series analysis
+library(xgboost) # For gradient boosted random forests
+library(superml) # For cross validation of the XGB model
+library(lmtest) # For testing the basic, linear model
+library(rfUtilities) #For cross validation of the random forest
+library(glmnet) # For selecting the relevant lag length in training the models
 set.seed(177125)
+
+# For complete files, including lstm.R and lstm_log_diff.R, please see: https://github.com/karansgarg/ec340_repo
 ```
 
 ## Introduction
 
+The Efficient Markets Hypothesis (EMH) is one of the most fundamental, yet controversial theories in financial economics. It states that past information about an asset is “priced in” to the market, meaning that it cannot be used to consistently generate above-market returns (Fama, 1970). The idea of efficient markets is a key assumption for many financial frameworks such as the Capital Asset Pricing Model and Black-Scholes model.
 
+The EMH was independently developed by Eugene Fama (1965) and Paul Samuelson (1965), who both proposed different rationales for this phenomenon. Fama proposed that prices reflect the “true value” of the asset, while Samuelson proposed that prices follow a martingale (a type of random walk), where $E(P_{t+1}|P_1,...,P_t) = P_t$.
 
-```{r cars}
-summary(cars)
+There exists, however,  a vast body of data science literature claiming to have generated above-market returns solely using past prices, including Dash & Dash (2016); Enke & Thawornwong (2005); Patel, et al., (2015); Schumaker & Chen (2009). These findings directly violate the main implication of the EMH. It is important to note these authors were simply aiming to apply machine learning to generate profitable strategies. The suggestion of inefficiency is simply an implication of their results.
+
+This paper will examine the extent to which these implications are justified. It will consider weak-form efficiency, hence will **only** use past prices to develop trading strategies. 3 popular machine learning models are trained to predict a stock price to assess whether past prices contain any predictive power. The models are not trained for classification (buy/sell) as is often seen in existing literature, but rather presented as a classical regression problem to determine the extent to which markets may be inefficient. 
+
+## Dataset and Feature Engineering
+
+Data from the Hong Kong stock exchange is used via the Quandl API. An asset is randomly chosen to be analysed. For this paper, the HSBC stock (HKG:0005) is used, with daily data from February 2014 to May 2021. 
+
+```{r download-data}
+# We begin by downloading the data from Quandl via their in-R API.
+# The Hong Kong stock exchange is used, and the HSBC stock price was randomly selected.
+# For a full list of potential stocks, please see: https://www.quandl.com/data/HKEX-Hong-Kong-Exchange
+# We generate a timeseries object as well as a tsibble object as both will be useful for different parts of analysis.
+Quandl.api_key('rTCfeqfv2pbfQG-uk-af')
+hsbc_tib <- Quandl('HKEX/00005', column_index = "1") %>% 
+  as_tsibble(index="Date")
+
+names(hsbc_tib)[2] <- "Price"
+dates <- seq(as.Date("2014-02-21"), as.Date("2021-05-12"), by = "day")
+hsbc_ts <- as.ts(hsbc_tib, start = c(2014, as.numeric(format(dates[1], "%j"))), frequency=365)
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r inspect-for-missing}
+# We check for missing/NA values in the data.
+has_gaps(hsbc_tib)
+colSums(is.na(hsbc_tib[, "Price"]))
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r impute-missing-values}
+# Create a function to fill missing values in the time series (due to weekends/bank holidays etc).
+# Each NA value is replaced with the previous close price of the series. This is the price that market
+# participants would see when making trading decisions on days where the exchange was closed.
+ImputeMissing <- function(ts){
+  df <- data.frame(ts)
+  for(i in 1:nrow(df)){
+    if(is.na(df[i, 1])){
+      df[i, 1] <- df[i-1, 1]
+    }
+  }
+  dates_formatted <- data.frame(dates)
+  df <- cbind(df, dates_formatted)
+  names(df)[1] <- "Price"
+  names(df)[2] <- "Date"
+  tib_new <- as_tsibble(df, index="Date") 
+
+  return(tib_new)
+}
+
+hsbc_tib <- ImputeMissing(hsbc_ts)
+hsbc_ts <- as.ts(hsbc_tib, start = c(2014, as.numeric(format(dates[1], "%j"))), frequency=365)
+```
+
+```{r visualise-data, results='markup'}
+# To first get a sense of the data, we plot the price-series, autocorrelation and partial
+# autocorrelation functions.
+price_plot <- hsbc_tib %>% 
+  ggplot(aes(Date, Price)) +
+  geom_line() +
+  theme_minimal() +
+  labs(title = "HSBC Stock Price", x = "Year", y = "Price")
+
+acf_plot <- hsbc_tib %>%
+  ggAcf(lag.max=100,
+        type="correlation",
+        plot=TRUE)
+
+pacf_plot <- hsbc_tib %>%
+  ggPacf(lag.max=100,
+         plot=TRUE)
+
+print(price_plot)
+#print(acf_plot)
+#print(pacf_plot)
+```
+
+We can see from the graph above that during this time, the market has been steadily trending downwards. An autocorrelation plot reveals extremely high levels of serial dependence, even in lags past 100 periods. However, the partial autocorrelation plot shows none of these lags to be individually significant.
+
+An Augmented Dickey-Fuller (ADF) test reveals that the price-series is non-stationary. The stationarity of the data may be a key factor in determining the predictive power of the models. Hence, the first difference of the natural log (for variance normalisation) of the data is taken. Another ADF test reveals that this new timeseries is stationary. For robustness, both stationary and non-stationary data is used to train the models. The data that is non-stationary has still been transformed through a natural log, and has also been normalised to stimulate better results.
+
+```{r stationarity}
+# Augmented Dickey-Fuller test to assess whether price-series is stationary.
+# Transform series by taking the natural log, and then the first difference (assuming
+# that the series is I(1)). Another ADF test reveals this transformed series is stationary.
+adf.test(hsbc_tib$Price)
+
+hsbc_log_diff <- hsbc_ts %>%
+  log() %>%
+  diff(1)
+
+adf.test(hsbc_log_diff)
+
+#Define the function to reverse the transformation
+ReverseLogDiff <- function(data){
+  data <- data %>%
+  cumsum() %>%
+  exp()
+  data <- data * as.vector(tail(hsbc_ts, 1))
+  return(data)
+}
+```
+
+Based on the ACF plot, up to 100 lags may be useful as features for the models. Fitting a lasso regression reveals that the first 40 lags are significant in a linear model. While further lags may provide explanatory power in a higher-order nonlinear setting, 40 lags provide a useful starting point for the number of features to train the models on.
+
+```{r normalisation-and-lasso}
+# Define function for normalisation and reverse normalisation of the data.
+# Fit the lasso regression to estimate appropriate number of lags to include.
+hsbc_normalised <- scale(log(hsbc_ts))
+ReverseNorm <- function(data){
+  data <- (data*attr(hsbc_normalised, "scaled:scale") + attr(hsbc_normalised, "scaled:center")) %>%
+    exp()
+  return(data)
+}
+hsbc_lagged <- embed(hsbc_normalised, 101)
+glm <- glmnet(hsbc_lagged, hsbc_lagged[,1])
+glm
+```
+
+```{r train-val-test-split-and-normalisation}
+# Using the inbuilt embedding function, lags of the series are generated to be used as features.
+# Both the stationary, and non-stationary series are embedded as both will be used for analysis.
+
+hsbc_lagged <- embed(hsbc_normalised, 41)
+hsbc_log_diff_lagged <- embed(hsbc_log_diff, 41)
+
+split_num_val <- round(nrow(hsbc_lagged)*0.7) # 10% of data reserved for validation
+split_num_train <- round(nrow(hsbc_lagged)*0.6) #30% of data reserved for testing
+
+hsbc_train <- data.frame(hsbc_lagged[1: split_num_train, ])
+hsbc_val <- data.frame(hsbc_lagged[(split_num_train+1):split_num_val, ])
+hsbc_test <- data.frame(hsbc_lagged[(split_num_val+1):nrow(hsbc_lagged), ])
+hsbc_log_diff_train <- data.frame(hsbc_log_diff_lagged[1: split_num_train, ])
+hsbc_log_diff_val <- data.frame(hsbc_log_diff_lagged[(split_num_train+1):split_num_val, ])
+hsbc_log_diff_test <- data.frame(hsbc_log_diff_lagged[(split_num_val+1):nrow(hsbc_log_diff_lagged), ])
+
+X_train <- data.matrix(hsbc_train[, -1])
+X_train_lstm <- array(X_train, c(dim(X_train), 1))
+y_train <- hsbc_train[, 1]
+X_log_diff_train <- data.matrix(hsbc_log_diff_train[, -1])
+X_log_diff_train_lstm <- array(X_log_diff_train, c(dim(X_log_diff_train), 1))
+y_log_diff_train <- hsbc_log_diff_train[, 1]
+
+X_val <- data.matrix(hsbc_val[, -1])
+X_val_lstm <- array(X_val, c(dim(X_val), 1))
+y_val <- hsbc_val[, 1]
+val_list <- list(X_val_lstm, y_val)
+X_log_diff_val <- data.matrix(hsbc_log_diff_val[, -1])
+X_log_diff_val_lstm <- array(X_log_diff_val, c(dim(X_log_diff_val), 1))
+y_log_diff_val <- hsbc_log_diff_val[, 1]
+val_log_diff_list <- list(X_log_diff_val_lstm, y_log_diff_val)
+
+X_test <- data.matrix(hsbc_test[, -1])
+X_test_lstm <- array(X_test, c(dim(X_test), 1))
+y_test <- hsbc_test[, 1] %>%
+  ReverseNorm()
+X_log_diff_test <- data.matrix(hsbc_log_diff_test[, -1])
+X_log_diff_test_lstm <- array(X_log_diff_test, c(dim(X_log_diff_test), 1))
+y_log_diff_test <- hsbc_log_diff_test[, 1] %>%
+  ReverseLogDiff()
+```
+
+## Models and Analysis
+
+The 3 models tested are random forest, gradient boosted decision trees and a recurrent neural network. 
+
+It is arguable that a classification problem (whether the price will increase or decrease) or a binary regression may be more suitable than a classical regression problem for models trading the asset. However, this paper aims to assess the predictive power of these models, so the accuracy of the models’ predictions also matter. Hence, the main metric that will be used to assess the quality of the models is the root mean square error (RMSE).
+
+```{r linear}
+# Fit both linear models and record their predictions and accuracy.
+linear_norm <- lm(X1 ~ X2 + X3 + X4 + X5 + X6 + X7 + X8 + X9 + X10 + X11 + X12 + X13 + X14 + X15 + X16 + X17 + X18 + X19 + X20 + X21 + X22 + X23 + X24 + X25 + X26 + X27 + X28 + X29 + X30 + X31 + X32 + X33 + X34 + X35 + X36 + X37 + X38 + X39 + X40 + X41, data=hsbc_train)
+summary(linear_norm)
+resettest(linear_norm)
+
+linear_predicted <- predict.lm(linear_norm, newdata = data.frame(hsbc_test)) %>% 
+  ReverseNorm()
+
+linear_accuracy <- forecast::accuracy(linear_predicted, y_test)
+linear_accuracy
+
+linear_log_diff <- lm(X1 ~ X2 + X3 + X4 + X5 + X6 + X7 + X8 + X9 + X10 + X11 + X12 + X13 + X14 + X15 + X16 + X17 + X18 + X19 + X20 + X21 + X22 + X23 + X24 + X25 + X26 + X27 + X28 + X29 + X30 + X31 + X32 + X33 + X34 + X35 + X36 + X37 + X38 + X39 + X40 + X41, data=hsbc_log_diff_train)
+
+summary(linear_log_diff)
+resettest(linear_log_diff)
+
+linear_log_diff_predicted <- predict.lm(linear_log_diff, newdata = data.frame(hsbc_log_diff_test)) %>% 
+  ReverseNorm()
+
+linear_log_diff_accuracy <- forecast::accuracy(linear_log_diff_predicted, y_log_diff_test)
+linear_log_diff_accuracy
+```
+
+A linear (OLS) regression on prices will be useful to act as the naïve baseline model. This is because it finds only the first lagged price to be significant. Moreover, the beta for this lag is approximately 1 (1.016), meaning that this regression essentially describes a martingale process – exactly as Samuelson predicted. A Ramsey RESET test of squared and cubed terms suggests that this model is not misspecified, further strengthening Samuelson’s claims. It achieved a test RMSE of 0.64. The model tested on the differenced data comparatively yields very low predictive power.
+
+```{r random-forest}
+# Fit both random forest models (after cross validation) and record predictions and accuracy.
+rf <- randomForest(X_train, y_train,
+                   xtest=X_val, ytest=y_val,
+                   keep.forest = TRUE)
+
+rf_cv <- rf.crossValidation(rf, X_train, y_train,
+                            bootstrap=FALSE, xtest=data.frame(X_val), ytest=y_val,
+                            keep.forest = TRUE)
+
+rf_cv_predicted <- predict(rf, X_test) %>%
+  ReverseNorm()
+
+rf_accuracy <- forecast::accuracy(rf_cv_predicted, y_test)
+rf_accuracy
+
+rf_log_diff <- randomForest(X_log_diff_train, y_log_diff_train,
+                   xtest=X_log_diff_val, ytest=y_log_diff_val,
+                   keep.forest = TRUE)
+
+rf_cv_log_diff <- rf.crossValidation(rf_log_diff, X_log_diff_train, y_log_diff_train,
+                            bootstrap=FALSE, xtest=data.frame(X_log_diff_val), ytest=y_log_diff_val,
+                            keep.forest = TRUE)
+
+rf_cv_log_diff_predicted <- predict(rf_log_diff, X_log_diff_test) %>%
+  ReverseNorm()
+
+rf_log_diff_accuracy <- forecast::accuracy(rf_cv_log_diff_predicted, y_log_diff_test)
+rf_log_diff_accuracy
+```
+
+The first sophisticated model tested is a random forest. This is due to its ability to model complex nonlinear relationships, as is expected with lagged asset prices. Both models underwent cross validation to tune the hyperparameters. The model trained on the normalised price data performed far better than that trained on the differenced data, with the former achieving a test RMSE of 7.22.
+
+```{r xgb}
+# Fit both gradient boosted decision tree models (after cross validation) and record predictions and accuracy.
+xgb_norm <- XGBTrainer$new(objective="reg:squarederror")
+
+xgb_gs_norm <- GridSearchCV$new(trainer=xgb_norm,
+                           parameters=list(learning_rate=seq(from=0.1, to=0.5, by=0.1),
+                                           max_depth=seq(from=3, to=10, by=1),
+                                           subsample=seq(from=0.4, to=1, by=0.1),
+                                           n_estimators=seq(from=100, to=500, by=100)),
+                           n_folds=5,
+                           scoring="rmse")
+
+xgb_gs_norm$fit(hsbc_train, "X1")
+
+xgb_norm_best <- xgb_gs_norm$best_iteration()
+
+xgb_norm_tuned <- xgboost(data=X_train,
+                     label=y_train,
+                     nrounds=2000,
+                     params=list(eta=xgb_norm_best$learning_rate,
+                                 max_depth=xgb_norm_best$max_depth,
+                                 subsample=xgb_norm_best$subsample,
+                                 n_estimators=xgb_norm_best$n_estimators))
+
+xgb_norm_predicted <- predict(xgb_norm_tuned, X_test) %>%
+  ReverseNorm()
+
+xgb_accuracy <- forecast::accuracy(xgb_norm_predicted, y_test)
+xgb_accuracy
+
+xgb_log_diff <- XGBTrainer$new(objective="reg:squarederror")
+
+xgb_gs_log_diff <- GridSearchCV$new(trainer=xgb_log_diff,
+                           parameters=list(learning_rate=seq(from=0.1, to=0.5, by=0.1),
+                                           max_depth=seq(from=3, to=10, by=1),
+                                           subsample=seq(from=0.4, to=1, by=0.1),
+                                           n_estimators=seq(from=100, to=500, by=100)),
+                           n_folds=5,
+                           scoring="rmse")
+
+xgb_gs_log_diff$fit(hsbc_log_diff_train, "X1")
+
+xgb_log_diff_best <- xgb_gs_log_diff$best_iteration()
+
+xgb_log_diff_tuned <- xgboost(data=X_log_diff_train,
+                     label=y_log_diff_train,
+                     nrounds=200,
+                     params=list(eta=xgb_log_diff_best$learning_rate,
+                                 max_depth=xgb_log_diff_best$max_depth,
+                                 subsample=xgb_log_diff_best$subsample,
+                                 n_estimators=xgb_log_diff_best$n_estimators))
+
+xgb_log_diff_predicted <- predict(xgb_log_diff_tuned, X_log_diff_test) %>%
+  ReverseNorm()
+
+xgb_log_diff_accuracy <- forecast::accuracy(xgb_log_diff_predicted, y_log_diff_test)
+xgb_log_diff_accuracy
+```
+
+A popular alternative to random forests (particularly due to the no bootstrapping condition of time series predictions) is gradient boosted decision trees, which have also been used extensively for stock predictions  (Basak, et al., 2019). Grid search cross validation was used to tune the learning rate, maximum depth, subsample proportion and number of trees for both models. The better of the two models performed marginally worse than the random forest, achieving a test RMSE of 7.72.
+
+Finally, the last model to be tested is a deep learning model. Recurrent neural networks (RNNs) are an extension to traditional feed-forward neural networks, and “loop back” on themselves and feed information to the network more than once. This results in them being able to process sequences of data far better than traditional “vanilla” neural networks. A very popular form of RNN is the long-short term memory network (LSTM). LSTMs have cells composed of multiple gates (as opposed to a single activation function) which allow them to maintain a cell state while processing sequential information, and not suffer from the vanishing gradient problem (Hochreiter & Schmidhuber, 1997).
+
+```{r lstm}
+# Tune the hyperparameters for the models, fit them, and record predictions and accuracies.
+# Note this chunk contains code from "lstm.R" and "lstm_log_diff.R", both of which can be found at the link below.
+# https://github.com/karansgarg/ec340_repo
+lstm_parameters <- list(units=seq(from=4, to=16, by=2),
+                        dropout=seq(from=0.2, to=0.6, by=0.1))
+
+runs <- tfruns::tuning_run("lstm.R", flags=lstm_parameters, sample=0.5)
+
+tfruns::ls_runs(order=metric_val_loss, decreasing=FALSE)
+
+best_run <- tfruns::ls_runs(order=metric_val_loss, decreasing=FALSE)[1,]
+
+run <- tfruns::training_run('lstm.R',flags = list(dropout = best_run$flag_dropout,
+                                          units = best_run$flag_units))
+
+best_model_norm <- load_model_hdf5('lstm.h5')
+
+best_model_norm %>% compile(optimizer="nadam", loss="mean_squared_error")
+
+best_model_norm_training <- best_model_norm %>% fit(x=X_train_lstm,
+                           y=y_train,
+                           batch_size=128,
+                           epochs=100,
+                           validation_data=val_list,
+                           shuffle=FALSE)
+
+lstm_norm_predicted <- predict(best_model_norm, X_test_lstm) %>%
+  ReverseNorm()
+
+lstm_norm_accuracy <- forecast::accuracy(as.ts(lstm_norm_predicted), y_test)
+print(lstm_norm_accuracy)
+
+
+runs <- tfruns::tuning_run("lstm_log_diff.R", flags=lstm_parameters, sample=0.5)
+
+tfruns::ls_runs(order=metric_val_loss, decreasing=FALSE)
+
+best_run <- tfruns::ls_runs(order=metric_val_loss, decreasing=FALSE)[1,]
+
+run <- tfruns::training_run('lstm_log_diff.R',flags = list(dropout = best_run$flag_dropout,
+                                          units = best_run$flag_units))
+
+best_model_log_diff <- load_model_hdf5('lstm_log_diff.h5')
+
+best_model_log_diff %>% compile(optimizer="nadam", loss="mean_squared_error")
+
+best_model_log_diff_training <- best_model_log_diff %>% fit(x=X_log_diff_train_lstm,
+                           y=y_log_diff_train,
+                           batch_size=128,
+                           epochs=100,
+                           validation_data=val_log_diff_list,
+                           shuffle=FALSE)
+
+lstm_log_diff_predicted <- predict(best_model_log_diff, X_log_diff_test_lstm) %>%
+  ReverseNorm()
+
+lstm_log_diff_accuracy <- forecast::accuracy(as.ts(lstm_log_diff_predicted), y_log_diff_test)
+print(lstm_log_diff_accuracy)
+```
+
+The RNN in this case consists of a single LSTM layer, a dropout layer to prevent overfitting, and then a single dense layer. TensorFlow’s built in “tfruns” package is used to tune the number of units in the LSTM layer, as well as the dropout rate. The better performing model achieved a test RMSE of 14.58, considerably worse than other models tested. 
+
+## Results
+
+```{r results}
+# Aggregate and plot the results.
+results <- data.frame(cbind(y_test,
+                            linear_predicted,
+                            rf_cv_predicted,
+                            xgb_norm_predicted,
+                            lstm_norm_predicted))
+names(results)[1] <- "actual"
+
+results <- results[-1, ]
+
+results <- data.frame(cbind(results,
+                            linear_log_diff_predicted,
+                            rf_cv_log_diff_predicted,
+                            xgb_log_diff_predicted,
+                            lstm_log_diff_predicted))
+
+results$timesteps <- as.numeric(row.names(results))
+
+accuracies <- data.frame(rbind(linear_accuracy,
+                               linear_log_diff_accuracy,
+                               rf_accuracy,
+                               rf_log_diff_accuracy,
+                               xgb_accuracy,
+                               xgb_log_diff_accuracy,
+                               lstm_norm_accuracy,
+                               lstm_log_diff_accuracy))
+
+rownames(accuracies) <- c("Linear Model w/ Normalised Data",
+                          "Linear Model w/ Differenced Data",
+                         "Random Forest w/ Normalised Data",
+                         "Random Forest w/ Differenced Data",
+                         "Gradient Boosted Decision Trees w/ Normalised Data",
+                         "Gradient Boosted Decision Trees w/ Differenced Data",
+                         "Recurrent Neural Network w/ Normalised Data",
+                         "Recurrent Neural Network w/ Differenced Data")
+
+ggplot(data=results) + 
+  geom_line(mapping=aes(x=timesteps, y=actual, colour="Actual")) +
+  geom_line(mapping=aes(x=timesteps, y=linear_predicted, colour="Linear")) +
+  geom_line(mapping=aes(x=timesteps, y=rf_cv_predicted, colour="Random Forest")) +
+  geom_line(mapping=aes(x=timesteps, y=xgb_norm_predicted, colour="XGB")) +
+  geom_line(mapping=aes(x=timesteps, y=lstm_norm_predicted[-1], colour="ANN")) + 
+  labs(title = "Model Predictions on Test Set", x = "Timesteps", y = "Price", colour="Model")
+
+```
+
+Initially, it would seem that the naïve model far outperforms any sophisticated model, which seems counterintuitive given the plethora of literature demonstrating their effectiveness. From the graph above it becomes more apparent as to why this is the case. None of the models chosen for the analysis are suited to extrapolate beyond the range of the data that they are trained on. While this does have important implications, for the purpose of this paper, the results are truncated to focus on the in-range predictions of the test set. 
+
+```{r results-truncated, results='markup'}
+# Truncate the results to those observations that are in range of the training data and reassess results.
+results_truncated <- results[1:350, ]
+
+trunc_accuracies <- data.frame(rbind((forecast::accuracy(results$linear_predicted, results_truncated$actual)),
+                          (forecast::accuracy(results$linear_log_diff_predicted, results_truncated$actual)),
+                          (forecast::accuracy(results_truncated$rf_cv_predicted, results_truncated$actual)),
+                          (forecast::accuracy(results_truncated$rf_cv_log_diff_predicted, results_truncated$actual)),
+                          (forecast::accuracy(results_truncated$xgb_norm_predicted, results_truncated$actual)),
+                          (forecast::accuracy(results_truncated$xgb_log_diff_predicted, results_truncated$actual)),
+                          (forecast:: accuracy(results_truncated$V5, results_truncated$actual)),
+                          (forecast::accuracy(results_truncated$lstm_log_diff_predicted, results_truncated$actual))))
+
+rownames(trunc_accuracies) <- c("Linear Model w/ Normalised Data",
+                                "Linear Model w/ Differenced Data",
+                                "Random Forest w/ Normalised Data",
+                                "Random Forest w/ Differenced Data",
+                                "Gradient Boosted Decision Trees w/ Normalised Data",
+                                "Gradient Boosted Decision Trees w/ Differenced Data",
+                                "Recurrent Neural Network w/ Normalised Data",
+                                "Recurrent Neural Network w/ Differenced Data")
+
+print(trunc_accuracies)
+
+
+#ggplot(data=results_truncated) + 
+#  geom_line(mapping=aes(x=timesteps, y=actual, colour="Actual")) +
+#  geom_line(mapping=aes(x=timesteps, y=linear_predicted, colour="Linear")) +
+#  geom_line(mapping=aes(x=timesteps, y=rf_cv_predicted, colour="Random Forest")) +
+#  geom_line(mapping=aes(x=timesteps, y=xgb_norm_predicted, colour="Gradient Boost")) +
+#  geom_line(mapping=aes(x=timesteps, y=V5, colour="LSTM"))
+```
+
+From the table above, we can better assess the models’ predictive power. While the naïve model still remains unbeaten, the sophisticated models performed far better than originally suggested. Econometrically, it is simple to conclude that this market is efficient. The price-series was shown to be non-stationary (demonstrating inherent randomness) and a martingale process is the best model to predict the stock price. Why then, is there such an abundance of literature claiming otherwise?
+
+When the EMH was first introduced, the technology used to trade assets was far more primitive. Investors could not (consistently) act fast enough to trade on their private information before it was priced in to the market (Greenwood & Jovanovic, 1999). Markets had deviations from efficiency, but these were not consistently exploitable due to technological constraints. Today however, transactions are done in microseconds. When price deviations occur, (algorithmic) investors are able to act on them much faster (Nuti, et al., 2011). As the volume of these algorithms increases, the deviations may become more significant due to the increased volatility that they bring (Nilsson & van der Hoorn, 2012). The EMH allows for deviations from efficiency (provided they are net zero), the difference is that investors are now able to consistently profit from these deviations (Zhou, et al., 2019). Hence, it is entirely plausible for prices to be efficient in the long run; but still allow for excess profitability in the short run, where high-frequency traders can profit from these deviations. 
+
+
+## Conclusion
+
+Data science literature has an abundance of models that claim to generate above-market returns, suggesting that markets are inefficient. By evaluating 3 popular models, this paper has shown that despite this evidence, weak-form efficiency may still be preserved. It is the **implication** of no excess-returns that is violated, as these models are able to exploit deviations from efficiency far more effectively than their human counterparts.
+
+Some limitations of this paper are that only one market was chosen. It is entirely possible that the HSBC stock is in fact entirely efficient and it is not possible to generate supernormal returns with this asset. It is also possible that the models considered are not suitable for this market, but other machine learning models may be. A more robust analysis of more securities with a wider variety of models is needed to confirm this.
+
+## References
+
+Basak, S. et al., 2019. Predicting the direction of stock market prices using tree-based classifiers. The North American Journal of Economics and Finance, 47(1), pp. 552-567.
+
+Dash, R. & Dash, P. K., 2016. A hybrid stock trading framework integrating technical analysis with machine learning techniques. The Journal of Finance and Data Science, 2(1), pp. 42-57.
+
+Enke, D. & Thawornwong, S., 2005. The use of data mining and neural networks for forecasting stock market returns. Expert Systems with Applications, Volume 29, pp. 927-940.
+
+Fama, E., 1965. The Behavior of Stock-Market Prices. The Journal of Business, 38(1), pp. 34-105.
+
+Fama, E., 1970. Efficient Capital Markets: A Review of Theory and Empirical Work. The Journal of Finance, 25(2), pp. 383-417.
+
+Greenwood, J. & Jovanovic, B., 1999. The Information-Technology Revolution and the Stock Market. American Economic Review, 89(2), pp. 116-122.
+
+Hochreiter, S. & Schmidhuber, J., 1997. Long Short-Term Memory. Neural Computation, 9(8), pp. 1735-1780.
+
+Nilsson, M. & van der Hoorn, D., 2012. The Relationship between High Frequency Trading and Stock Market Volatility. [Online] 
+Available at: https://lup.lub.lu.se/student-papers/search/publication/2837241
+[Accessed 22 April 2021].
+
+Nuti, G., Mirghaemi, M., Treleaven, P. & Yingsaeree, C., 2011. Algorithmic Trading. Computer, 44(11), pp. 61-69.
+
+Patel, J., Shah, S., Thakkar, P. & Kotecha, K., 2015. Predicting stock and stock price index movement using Trend Deterministic Data Preparation and machine learning techniques. Expert Systems with Applications, 42(1), pp. 259-268.
+
+Samuelson, P. A., 1965. Proof That Properly Anticipated Prices Fluctuate Randomly. Industrial Management Review, 6(2), pp. 41-49.
+
+Schumaker, R. P. & Chen, H., 2009. Textual analysis of stock market prediction using breaking financial news: The AZFin text system. ACM Transactions on Information Systems, 27(2), p. 19.
+
+Zhou, H., Elliott, R. J. & Kalev, P. S., 2019. Information or noise: What does algorithmic trading incorporate into the stock prices?. International Review of Financial Analysis, Volume 63, pp. 27-39.
+
+
+

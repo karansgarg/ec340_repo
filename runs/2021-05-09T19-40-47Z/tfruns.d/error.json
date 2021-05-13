@@ -1,4 +1,0 @@
-{
-  "message": "$ operator is invalid for atomic vectors",
-  "traceback": ["as.pairlist(list(...))", "pairlist(digits = digits, quote = quote, na.print = na.print, \n    print.gap = print.gap, right = right, max = max, width = width, \n    useSource = useSource, ...)", "print.default(\"Test loss:\", acc$loss)", "print(\"Test loss:\", acc$loss)", "eval(ei, envir)", "eval(ei, envir)", "withVisible(eval(ei, envir))", "tuning_run(\"lstm.R\", flags = lstm_parameters, sample = 0.5)"]
-}

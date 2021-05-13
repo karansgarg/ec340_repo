@@ -1,4 +1,0 @@
-{
-  "message": "lstm.R:29:26: unexpected symbol\n28:                          epochs=100\n29:                          batch_size\n                             ^",
-  "traceback": "tuning_run(\"lstm.R\", flags = lstm_parameters, sample = 0.5)"
-}

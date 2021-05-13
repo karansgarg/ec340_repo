@@ -1,4 +1,0 @@
-{
-  "message": "object 'FLAGS' not found",
-  "traceback": ["layer_lstm(., units = FLAGS$units, activation = \"tanh\", return_sequences = FALSE, \n    input_shape = dim(X_train_lstm)[-1])", "function_list[[i]](value)", "freduce(value, `_function_list`)", "`_fseq`(`_lhs`)", "eval(quote(`_fseq`(`_lhs`)), env, env)", "eval(quote(`_fseq`(`_lhs`)), env, env)", "withVisible(eval(quote(`_fseq`(`_lhs`)), env, env))", "keras_model_sequential() %>% layer_lstm(units = FLAGS$units, \n    activation = \"tanh\", return_sequences = FALSE, input_shape = dim(X_train_lstm)[-1]) %>% \n    layer_dropout(FLAGS$dropout) %>% layer_dense(units = 1)", "CreateLSTM()", "eval(ei, envir)", "eval(ei, envir)", "withVisible(eval(ei, envir))", "tuning_run(\"lstm.R\", flags = lstm_parameters, sample = 0.5)"]
-}
